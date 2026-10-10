@@ -47,6 +47,16 @@ class GitHubPullRequestSource(TaskSource):
                 is_draft=item.is_draft,
                 head_ref_name=item.head_ref_name,
                 base_ref_name=item.base_ref_name,
+                head_sha=item.head_ref_oid,
+                mergeable=item.mergeable,
+                merge_state_status=item.merge_state_status,
+                check_conclusions=tuple(
+                    check.conclusion or check.state or "UNKNOWN"
+                    for check in item.status_check_rollup
+                ),
+                linked_issue_numbers=tuple(
+                    str(reference.number) for reference in item.closing_issues_references
+                ),
             )
             for item in items
         ]

@@ -22,10 +22,14 @@ from curupira.models.configuration import (
 from curupira.models.github import (
     DEFAULT_ISSUE_JSON_FIELDS,
     GhIssue,
+    GhIssueReference,
     GhIssueSearchRequest,
     GhLabel,
     GhPullRequest,
     GhPullRequestSearchRequest,
+    GhRepositoryReference,
+    GhStatusCheck,
+    GhTaskViewRequest,
 )
 from curupira.models.process import (
     CodingTaskRequest,
@@ -42,11 +46,13 @@ from curupira.models.profiles import (
     OpenCodeCliProfile,
 )
 from curupira.models.tasks import (
+    CompletedTaskState,
     CronRunState,
     ResolvedAutomation,
     RunningCodingSession,
     Task,
     TaskIdentity,
+    WorkflowStage,
 )
 from curupira.models.trello import TrelloBoard, TrelloCard, TrelloList, TrelloListRequest
 
@@ -67,16 +73,21 @@ __all__ = [
     "CodingAgentsSettings",
     "CodingTaskRequest",
     "CommandRequest",
+    "CompletedTaskState",
     "CronAutomationConfiguration",
     "CronRunState",
     "CursorCliProfile",
     "DispatchOutcome",
     "ExecutionSettings",
     "GhIssue",
+    "GhIssueReference",
     "GhIssueSearchRequest",
     "GhLabel",
     "GhPullRequest",
     "GhPullRequestSearchRequest",
+    "GhRepositoryReference",
+    "GhStatusCheck",
+    "GhTaskViewRequest",
     "IssueAutomationConfiguration",
     "OpenCodeCliProfile",
     "PollingSettings",
@@ -91,4 +102,5 @@ __all__ = [
     "TrelloCard",
     "TrelloList",
     "TrelloListRequest",
+    "WorkflowStage",
 ]

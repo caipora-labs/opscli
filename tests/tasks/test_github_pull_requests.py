@@ -42,6 +42,10 @@ async def test_source_searches_pull_requests_and_builds_tasks(tmp_path: Path) ->
                 isDraft=True,
                 headRefName="feature",
                 baseRefName="main",
+                headRefOid="head-42",
+                mergeable="MERGEABLE",
+                mergeStateStatus="CLEAN",
+                statusCheckRollup=[{"conclusion": "SUCCESS"}],
             )
         ]
     )
@@ -69,6 +73,9 @@ async def test_source_searches_pull_requests_and_builds_tasks(tmp_path: Path) ->
     assert tasks[0].is_draft is True
     assert tasks[0].head_ref_name == "feature"
     assert tasks[0].base_ref_name == "main"
+    assert tasks[0].head_sha == "head-42"
+    assert tasks[0].merge_state_status == "CLEAN"
+    assert tasks[0].check_conclusions == ("SUCCESS",)
 
 
 def test_pull_request_trigger_is_registered_and_provides_prompt_context(tmp_path: Path) -> None:

@@ -15,6 +15,7 @@ from curupira.models import (
     GhIssueSearchRequest,
     GhPullRequest,
     GhPullRequestSearchRequest,
+    GhTaskViewRequest,
     ProcessResult,
 )
 from curupira.vcs.base import Checkout, CheckoutRequest, VersionControl
@@ -109,6 +110,27 @@ class FakeGitHub(GhClient):
 
     @override
     async def list_pull_requests(self, request: GhPullRequestSearchRequest) -> list[GhPullRequest]:
+        return self.pulls
+
+    @override
+    async def view_issue(self, request: GhTaskViewRequest) -> GhIssue:
+        issue = next((item for item in self.issues if item.number == request.number), None)
+        if issue is None:
+            raise AssertionError(f"unexpected issue lookup: {request.repo}#{request.number}")
+        return issue.model_copy(update={"state": issue.state or "OPEN"})
+
+    @override
+    async def view_pull_request(self, request: GhTaskViewRequest) -> GhPullRequest:
+        pull = next((item for item in self.pulls if item.number == request.number), None)
+        if pull is None:
+            raise AssertionError(f"unexpected pull-request lookup: {request.repo}#{request.number}")
+        return pull.model_copy(update={"state": pull.state or "OPEN"})
+
+    @override
+    async def list_pull_requests_for_issue(
+        self, repo: str, issue_number: int
+    ) -> list[GhPullRequest]:
+        del repo, issue_number
         return self.pulls
 
 

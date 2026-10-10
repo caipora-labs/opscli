@@ -34,11 +34,11 @@ class PollingTaskFeed(TaskFeed):
         discovered = await self._source.discover(self.automation, self._polling.batch_size)
         tasks: list[Task] = []
         for task in discovered:
-            identity = task.identity
-            if identity.key in self._seen:
+            key = task.dispatch_key
+            if key in self._seen:
                 continue
             if not preview:
-                self._seen.add(identity.key)
+                self._seen.add(key)
             tasks.append(task)
         return tasks
 
@@ -101,3 +101,52 @@ async def merge_task_streams(
         for producer in producers:
             producer.cancel()
         await asyncio.gather(*producers, return_exceptions=True)
+
+
+def task_order_key(task: Task) -> tuple[int, str, str, str]:
+    """Order work by workflow stage and stable source identity, never poll timing."""
+    return (
+        int(task.workflow_stage),
+        task.identity.repo.casefold(),
+        task.identity.id,
+        task.identity.automation_id,
+    )
+
+
+async def poll_task_feeds(feeds: Sequence[TaskFeed], *, preview: bool = False) -> list[Task]:
+    """Poll every configured feed together, then return one deterministic stage order."""
+    batches = await asyncio.gather(
+        *(feed.poll(preview=preview) for feed in feeds), return_exceptions=True
+    )
+    discovered: list[Task] = []
+    for feed, batch in zip(feeds, batches, strict=True):
+        if isinstance(batch, DispatchError):
+            logger.warning("Discovery failed for %s: %s", _automation_name(feed), batch)
+            continue
+        if isinstance(batch, BaseException):
+            raise batch
+        discovered.extend(batch)
+    return sorted(discovered, key=task_order_key)
+
+
+async def prioritize_task_stream(
+    feeds: Sequence[TaskFeed], poll_interval_seconds: float, *, initial: Sequence[Task] = ()
+) -> AsyncGenerator[Task, None]:
+    """Poll feeds in common rounds and emit each round by workflow stage."""
+    interval = min(poll_interval_seconds, MAX_POLL_INTERVAL_SECONDS)
+    first = True
+    while True:
+        discovered = sorted(initial, key=task_order_key) if first else await poll_task_feeds(feeds)
+        first = False
+        if not discovered:
+            await asyncio.sleep(interval)
+            interval = min(interval * 2, MAX_POLL_INTERVAL_SECONDS)
+            continue
+        interval = min(poll_interval_seconds, MAX_POLL_INTERVAL_SECONDS)
+        for task in discovered:
+            yield task
+
+
+def _automation_name(feed: TaskFeed) -> str:
+    automation = getattr(feed, "automation", None)
+    return str(getattr(automation, "automation_id", type(feed).__name__))

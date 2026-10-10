@@ -9,9 +9,9 @@ from typing_extensions import override
 
 from curupira.errors import DispatchError
 from curupira.models import PollingSettings, ResolvedAutomation, Task
-from curupira.tasks.base import TaskSource
-from curupira.tasks.feed import PollingTaskFeed, merge_task_streams
-from tests.helpers import issue_task, resolved_automation
+from curupira.tasks.base import TaskFeed, TaskSource
+from curupira.tasks.feed import PollingTaskFeed, merge_task_streams, poll_task_feeds
+from tests.helpers import issue_task, pull_request_task, resolved_automation
 
 
 class FakeTaskSource(TaskSource):
@@ -41,6 +41,53 @@ async def test_polling_deduplicates_and_preview_does_not_mark_seen(tmp_path: Pat
     assert await feed.poll() == [task]
     assert await feed.poll() == []
     assert source.calls[0] == (automation, 8)
+
+
+async def test_polling_re_admits_pull_request_after_head_changes(tmp_path: Path) -> None:
+    first = pull_request_task(tmp_path).model_copy(update={"head_sha": "head-1"})
+    changed = first.model_copy(update={"head_sha": "head-2"})
+    source = FakeTaskSource([[first], [first], [changed]])
+    feed = PollingTaskFeed(
+        resolved_automation(tmp_path, "reviews", "github-cli-pull-requests"),
+        PollingSettings(),
+        source,
+    )
+
+    assert await feed.poll() == [first]
+    assert await feed.poll() == []
+    assert await feed.poll() == [changed]
+
+
+async def test_feed_poll_races_do_not_override_workflow_stage_order(tmp_path: Path) -> None:
+    class BatchFeed(TaskFeed):
+        def __init__(self, tasks: list[Task], delay: float) -> None:
+            self.tasks = tasks
+            self.delay = delay
+
+        @override
+        async def poll(self, *, preview: bool = False) -> list[Task]:
+            del preview
+            await asyncio.sleep(self.delay)
+            return self.tasks
+
+        @override
+        async def stream(self) -> AsyncIterator[Task]:
+            for task in self.tasks:
+                yield task
+
+    issue = issue_task(tmp_path)
+    ready_pull = pull_request_task(tmp_path, 12).model_copy(
+        update={
+            "is_draft": False,
+            "head_sha": "head-12",
+            "mergeable": "MERGEABLE",
+            "merge_state_status": "CLEAN",
+            "check_conclusions": ("SUCCESS",),
+        }
+    )
+    available = await poll_task_feeds([BatchFeed([issue], 0), BatchFeed([ready_pull], 0.01)])
+
+    assert available == [ready_pull, issue]
 
 
 async def test_backoff_resets_after_discovery(tmp_path: Path) -> None:

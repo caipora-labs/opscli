@@ -149,7 +149,7 @@ async def test_empty_dispatch_does_not_create_state(tmp_path: Path) -> None:
     assert list(tmp_path.iterdir()) == []
 
 
-async def test_resume_uses_original_snapshot_instead_of_changed_configuration(
+async def test_resume_discards_stale_issue_snapshot_and_uses_current_prompt(
     tmp_path: Path,
 ) -> None:
     configured = settings(tmp_path)
@@ -165,9 +165,11 @@ async def test_resume_uses_original_snapshot_instead_of_changed_configuration(
     result = await dispatch_next_task(
         configured, gh, adapter_factory=lambda _: adapter, version_control=gh.vcs
     )
-    assert result.selected == original
-    assert adapter.requests[0].session_id == "original"
-    assert "Continue the interrupted task" in adapter.requests[0].message
+    assert result.selected is not None
+    assert result.selected.title == "Changed"
+    assert adapter.requests[0].session_id is None
+    assert adapter.requests[0].message == "Handle 42: Changed"
+    assert await RunningSessionRepository(configured.settings.state_db_path).list_all() == []
 
 
 async def test_assigned_session_is_persisted_before_the_process_runs(tmp_path: Path) -> None:
@@ -269,7 +271,7 @@ def test_common_placeholders_use_the_task_source(tmp_path: Path) -> None:
     assert render_task_prompt(issue_task(tmp_path)) == "Handle issue 42: Task 42"
 
 
-async def test_one_shot_respects_automation_order_and_can_select_pull_requests(
+async def test_one_shot_prioritizes_workflow_stage_over_automation_order(
     tmp_path: Path,
 ) -> None:
     data = settings(tmp_path).model_dump()
@@ -295,7 +297,7 @@ async def test_one_shot_respects_automation_order_and_can_select_pull_requests(
     )
     outcome = await dispatch_next_task(configured, gh, dry_run=True)
     assert outcome.selected is not None
-    assert outcome.selected.identity.task_type == "issue"
+    assert outcome.selected.identity.task_type == "github-cli-pull-requests"
     gh.issues = []
     adapter = RecordingAdapter()
     outcome = await dispatch_next_task(

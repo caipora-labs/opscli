@@ -89,7 +89,7 @@ provider = "cursor"
 [coding_agents.automations.resolve-ready-issues]
 trigger_type = "issue"
 repo = "acme/api"
-query = "is:open label:agent-ready sort:created-asc"
+query = "is:open label:agent-ready -linked:pr sort:created-asc"
 # path = "~/code/api" # optional existing checkout or alternative clone destination
 prompt = """
 Resolve issue ${issue_number}: ${issue_title}

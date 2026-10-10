@@ -28,9 +28,14 @@ from curupira.runtime import (
 )
 from curupira.scheduler import TaskScheduler
 from curupira.status import TerminalTaskStatus
-from curupira.storage import CronScheduleRepository, RunningSessionRepository
+from curupira.storage import (
+    CompletedTaskRepository,
+    CronScheduleRepository,
+    RunningSessionRepository,
+)
 from curupira.tasks.base import TaskFeed
-from curupira.tasks.feed import merge_task_streams
+from curupira.tasks.feed import poll_task_feeds, prioritize_task_stream
+from curupira.tasks.revalidation import GitHubTaskRevalidator
 from curupira.telemetry import TaskTelemetry
 from curupira.vcs.base import VersionControl
 
@@ -250,18 +255,25 @@ def describe_agents() -> list[str]:
 
 
 async def _batch_stream(feeds: Sequence[TaskFeed], size: int | None) -> AsyncIterator[Task]:
-    """Poll each feed until it has no newly available work, optionally capping admissions."""
+    """Poll feeds in common rounds until empty, capping stage-ordered admissions."""
     admitted = 0
-    for feed in feeds:
-        while size is None or admitted < size:
-            tasks = await feed.poll()
-            if not tasks:
-                break
-            for task in tasks:
-                if size is not None and admitted >= size:
-                    return
-                admitted += 1
-                yield task
+    while size is None or admitted < size:
+        tasks = await poll_task_feeds(feeds)
+        if not tasks:
+            return
+        for task in tasks:
+            if size is not None and admitted >= size:
+                return
+            admitted += 1
+            yield task
+
+
+def _limit_initial_tasks(tasks: Sequence[Task], size: int | None) -> tuple[list[Task], int | None]:
+    """Apply a finite drain's cap to its initial poll and return the remaining allowance."""
+    if size is None:
+        return list(tasks), None
+    admitted = list(tasks[:size])
+    return admitted, size - len(admitted)
 
 
 async def async_main(options: CliOptions) -> int:
@@ -377,10 +389,20 @@ async def _execute_scheduled_command(
 ) -> int:
     """Execute a finite drain or continuous watch through the shared scheduler."""
     sessions = RunningSessionRepository(settings.settings.state_db_path)
+    completed_tasks = CompletedTaskRepository(settings.settings.state_db_path)
     recovered = await sessions.list_all()
     cron = CronScheduleRepository(settings.settings.state_db_path)
     feeds = create_task_feeds(settings, gh, cron)
-    executor = TaskExecutor(settings.settings, version_control, sessions, cron, telemetry=telemetry)
+    initial_tasks, remaining = _limit_initial_tasks(await poll_task_feeds(feeds), options.size)
+    revalidate = GitHubTaskRevalidator(gh)
+    executor = TaskExecutor(
+        settings.settings,
+        version_control,
+        sessions,
+        cron,
+        telemetry=telemetry,
+        pre_start_validator=revalidate,
+    )
     status = TerminalTaskStatus(show_idle=True)
     scheduler = TaskScheduler(
         settings.settings,
@@ -388,15 +410,16 @@ async def _execute_scheduled_command(
         on_active_tasks_changed=lambda tasks: status.update(
             tasks, settings.settings.max_active_tasks
         ),
+        task_validator=revalidate,
+        completion_verifier=revalidate.completion_next_action,
+        completed_tasks=completed_tasks,
     )
     if options.watch:
-        tasks = merge_task_streams(
-            [feed.stream() for feed in feeds], max_pending=settings.settings.max_pending_tasks
-        )
+        tasks = prioritize_task_stream(feeds, settings.settings.polling.poll_interval_seconds)
     else:
-        tasks = _batch_stream(feeds, options.size)
+        tasks = _batch_stream(feeds, remaining)
     try:
-        await scheduler.run(tasks, resume_sessions=recovered)
+        await scheduler.run(tasks, resume_sessions=recovered, initial_tasks=initial_tasks)
     finally:
         status.clear()
     return 1 if scheduler.failed_tasks else 0

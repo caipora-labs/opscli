@@ -2,6 +2,7 @@
 
 import logging
 from asyncio import CancelledError
+from collections.abc import Awaitable, Callable
 from string import Template
 
 from curupira.agents import CliAdapterFactory, create_cli_adapter
@@ -62,6 +63,7 @@ class TaskExecutor:
         adapter_factory: CliAdapterFactory = create_cli_adapter,
         telemetry: TaskTelemetry | None = None,
         runner: AsyncProcessRunner | None = None,
+        pre_start_validator: Callable[[Task], Awaitable[Task | None]] | None = None,
     ) -> None:
         self._settings = settings
         self._runner = runner or AsyncProcessRunner()
@@ -72,6 +74,7 @@ class TaskExecutor:
         self._adapter_factory = adapter_factory
         self._telemetry = telemetry or TaskTelemetry()
         self._adapters: dict[str, CodingAgentCliAdapter] = {}
+        self._pre_start_validator = pre_start_validator
 
     async def execute(
         self, task: Task, resumed: RunningCodingSession | None = None
@@ -140,6 +143,21 @@ class TaskExecutor:
                     result.stderr,
                 )
                 return result
+        if self._pre_start_validator is not None:
+            current = await self._pre_start_validator(task)
+            if current is None or current.state_fingerprint != task.state_fingerprint:
+                await self._sessions.delete(task)
+                logger.info(
+                    "Task %s changed before agent start; it will be reconsidered from current "
+                    "source state",
+                    task.identity.key,
+                )
+                return ProcessResult(
+                    returncode=0,
+                    stdout=(
+                        "Task changed before agent start; current source state will be rechecked."
+                    ),
+                )
         original_message = resumed.message if resumed is not None else render_task_prompt(task)
 
         async def persist(session_id: str) -> None:
@@ -182,6 +200,10 @@ class TaskExecutor:
                     )
                 except Exception:
                     logger.exception("Could not clean up worktree for %s", task.identity.key)
+
+    async def discard_session(self, task: Task) -> None:
+        """Retire a recovered session that no longer matches current source state."""
+        await self._sessions.delete(task)
 
     def _version_control_for(self, task: Task) -> VersionControl:
         """Return the trigger's clone mechanism, created once per trigger type."""

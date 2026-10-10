@@ -23,6 +23,7 @@ from curupira.models import (
     GhIssueSearchRequest,
     GhPullRequest,
     GhPullRequestSearchRequest,
+    GhTaskViewRequest,
 )
 
 _PROJECT_ITEM_JSON_FIELDS = ("number", "title", "url", "projectItems")
@@ -36,10 +37,17 @@ _DEFAULT_PULL_REQUEST_JSON_FIELDS = (
     "labels",
     "isDraft",
     "headRefName",
+    "headRefOid",
     "baseRefName",
     "mergeable",
     "mergeStateStatus",
+    "reviewDecision",
+    "statusCheckRollup",
+    "closingIssuesReferences",
+    "mergedAt",
 )
+_ISSUE_VIEW_JSON_FIELDS = DEFAULT_ISSUE_JSON_FIELDS
+_PULL_REQUEST_VIEW_JSON_FIELDS = _DEFAULT_PULL_REQUEST_JSON_FIELDS
 _TRANSIENT_ERROR_MARKERS = (
     "rate limit",
     "connection reset",
@@ -82,6 +90,34 @@ class GhClient:
             return TypeAdapter(list[GhPullRequest]).validate_python(payload)
         except ValidationError as error:
             raise CliOutputError(f"gh returned invalid pull request JSON: {error}") from error
+
+    async def view_issue(self, request: GhTaskViewRequest) -> GhIssue:
+        """Fetch one issue's current state rather than trusting a saved task snapshot."""
+        payload = await self._view_item("issue", request, _ISSUE_VIEW_JSON_FIELDS)
+        try:
+            return GhIssue.model_validate(payload)
+        except ValidationError as error:
+            raise CliOutputError(f"gh returned invalid issue JSON: {error}") from error
+
+    async def view_pull_request(self, request: GhTaskViewRequest) -> GhPullRequest:
+        """Fetch current pull-request stage, head, checks, and closing references."""
+        payload = await self._view_item("pr", request, _PULL_REQUEST_VIEW_JSON_FIELDS)
+        try:
+            return GhPullRequest.model_validate(payload)
+        except ValidationError as error:
+            raise CliOutputError(f"gh returned invalid pull request JSON: {error}") from error
+
+    async def list_pull_requests_for_issue(
+        self, repo: str, issue_number: int
+    ) -> list[GhPullRequest]:
+        """Find open PRs whose GitHub closing metadata references an issue."""
+        return await self.list_pull_requests(
+            GhPullRequestSearchRequest(
+                repo=repo,
+                query=f"{issue_number} in:body",
+                limit=1000,
+            )
+        )
 
     @resilient(
         retry=RetryConfig(
@@ -171,6 +207,40 @@ class GhClient:
                 payload = [payload]
             if not all(isinstance(item, dict) for item in payload):
                 raise TypeError("expected each jq result to be a JSON object")
+            return payload
+        except (json.JSONDecodeError, TypeError) as error:
+            raise CliOutputError(f"gh returned invalid {command} JSON: {error}") from error
+
+    async def _view_item(
+        self, command: str, request: GhTaskViewRequest, fields: tuple[str, ...]
+    ) -> dict[str, object]:
+        """Run a typed issue/PR view command and decode its single JSON object."""
+        async with self._search_lock:
+            result = await self._runner.run(
+                CommandRequest(
+                    executable="gh",
+                    arguments=(
+                        command,
+                        "view",
+                        str(request.number),
+                        "--repo",
+                        request.repo,
+                        "--json",
+                        ",".join(fields),
+                    ),
+                )
+            )
+        if result.returncode != 0:
+            if _is_transient_cli_error(result.stderr):
+                raise TransientCliError(
+                    f"gh temporarily failed with status {result.returncode}: "
+                    f"{result.stderr.strip()}"
+                )
+            raise CliExecutionError("gh", result.returncode, result.stderr)
+        try:
+            payload = _decode_json_output(result.stdout)
+            if not isinstance(payload, dict):
+                raise TypeError("expected one JSON object")
             return payload
         except (json.JSONDecodeError, TypeError) as error:
             raise CliOutputError(f"gh returned invalid {command} JSON: {error}") from error

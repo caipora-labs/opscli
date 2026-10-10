@@ -21,8 +21,13 @@ from curupira.dispatcher import create_task_feeds
 from curupira.executor import TaskExecutor
 from curupira.models import Task
 from curupira.scheduler import TaskScheduler
-from curupira.storage import CronScheduleRepository, RunningSessionRepository
-from curupira.tasks.feed import merge_task_streams
+from curupira.storage import (
+    CompletedTaskRepository,
+    CronScheduleRepository,
+    RunningSessionRepository,
+)
+from curupira.tasks.feed import poll_task_feeds, prioritize_task_stream
+from curupira.tasks.revalidation import GitHubTaskRevalidator
 from curupira.telemetry import TaskTelemetry
 from curupira.tui.logging_handler import TuiLogHandler, attach_rich_log
 from curupira.tui.status import OrchestratorStatus
@@ -186,27 +191,32 @@ class OrchestratorApp(App[int]):
         """Drive the same continuous pipeline used by ``curu run --watch``."""
         settings = self._settings
         sessions = RunningSessionRepository(settings.settings.state_db_path)
+        completed_tasks = CompletedTaskRepository(settings.settings.state_db_path)
         recovered = await sessions.list_all()
         cron = CronScheduleRepository(settings.settings.state_db_path)
         feeds = create_task_feeds(settings, self._gh, cron)
+        initial_tasks = await poll_task_feeds(feeds)
+        revalidate = GitHubTaskRevalidator(self._gh)
         executor = TaskExecutor(
             settings.settings,
             self._version_control,
             sessions,
             cron,
             telemetry=self._telemetry,
+            pre_start_validator=revalidate,
         )
         scheduler = TaskScheduler(
             settings.settings,
             executor,
             on_active_tasks_changed=self._on_active_tasks_changed,
+            task_validator=revalidate,
+            completion_verifier=revalidate.completion_next_action,
+            completed_tasks=completed_tasks,
         )
         self._scheduler = scheduler
-        tasks = merge_task_streams(
-            [feed.stream() for feed in feeds], max_pending=settings.settings.max_pending_tasks
-        )
+        tasks = prioritize_task_stream(feeds, settings.settings.polling.poll_interval_seconds)
         try:
-            await scheduler.run(tasks, resume_sessions=recovered)
+            await scheduler.run(tasks, resume_sessions=recovered, initial_tasks=initial_tasks)
             self._exit_code = 1 if scheduler.failed_tasks else 0
         except asyncio.CancelledError:
             raise
