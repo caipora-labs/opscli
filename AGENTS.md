@@ -6,7 +6,7 @@ Explicit instructions in a task or prompt override this file.
 
 ## Project
 
-Curupira dispatches GitHub, Azure DevOps, Trello, and cron tasks to local coding-agent CLIs
+Curupira dispatches GitHub, Azure DevOps, Trello, monday.com, and cron tasks to local coding-agent CLIs
 (OpenCode, Codex, Claude Code, Cursor, Gemini CLI, GitHub Copilot CLI, Kilo CLI, pi, and
 Qwen Code). The package, import, and main console script are `curupira`; `curu` is the
 short alias.

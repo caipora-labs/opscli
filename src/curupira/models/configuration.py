@@ -225,6 +225,25 @@ class AzurePullRequestAutomationConfiguration(AutomationConfigurationBase):
         return value
 
 
+class MondayAutomationConfiguration(AutomationConfigurationBase):
+    """Discover monday.com board items through the official ``mcli`` executable.
+
+    Attributes:
+        board_id: Numeric monday.com board identifier, preserved as a string.
+    """
+
+    trigger_type: NonEmptyString = "monday-cli-items"
+    board_id: NonEmptyString
+
+    @field_validator("board_id")
+    @classmethod
+    def validate_board_id(cls, value: str) -> str:
+        """Require a numeric board identifier without coercing away its precision."""
+        if not value.isascii() or not value.isdecimal():
+            raise ValueError("board_id must be a numeric string")
+        return value
+
+
 class TrelloAutomationConfiguration(AutomationConfigurationBase):
     """Discover cards from one Trello board through Scale-Flow's ``trello-cli``.
 

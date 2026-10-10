@@ -2,17 +2,18 @@
 
 **Curupira** (by Caipora Labs) is the product name. The PyPI project, primary console script, and Python import are `curupira`. The short command `curu` is the same entry point.
 
-Curupira runs automations on your machine. It takes a GitHub issue or pull request, a Trello card, or a local cron occurrence, and hands it to a coding-agent CLI you already have.
+Curupira runs automations on your machine. It takes a GitHub issue or pull request, a Trello card, a monday.com board item, or a local cron occurrence, and hands it to a coding-agent CLI you already have.
 
 Each automation in the settings TOML watches one source (issues, pull requests, Trello
-cards, or a cron schedule) and carries its own prompt. All automations share one discovery,
-scheduling, and execution pipeline: `run` drains currently available tasks, while
+cards, monday.com items, or a cron schedule) and carries its own prompt. All automations
+share one discovery, scheduling, and execution pipeline: `run` drains currently available tasks, while
 `run --watch` polls every automation continuously.
 
 ## Requirements
 
 - Python 3.11 or newer (3.11–3.14 supported; Linux, macOS, and Windows)
 - [`gh`](https://cli.github.com/) installed and authenticated (`gh auth login`)
+- [`mcli`](https://github.com/mondaycom/mcli) when using monday.com board automations
 - Only the CLIs used by the configured profiles need to be installed:
   [`claude`](https://code.claude.com/docs/en/cli-reference),
   [`codex`](https://developers.openai.com/codex/cli/), the Cursor CLI (`agent`),
@@ -93,13 +94,14 @@ and is carried into every task identity. `trigger_type` selects the source:
 - `"issue"` — discovers matching GitHub issues with `query`
 - `"github-cli-pull-requests"` — discovers matching GitHub pull requests with `query`
 - `"azure-cli-pull-requests"` — lists Azure DevOps pull requests with `az repos pr list`
+- `"monday-cli-items"` — discovers items from a board with the official `mcli` CLI
 - `"trello-cli-cards"` — discovers cards from a configured board with Scale-Flow's `trello-cli`
 - `"cron"` — produces occurrences from `schedule` instead of querying a forge
 
 Every automation requires `repo` and `prompt`. GitHub triggers also require `query`;
-cron requires `schedule`. Trello automations require `board_id` and optionally accept
-`list_ids`; see the [Trello task source guide](https://caipora-labs.github.io/curupira/trello/).
-For Azure DevOps, `repo` uses
+cron requires `schedule`, and monday.com requires a numeric-string `board_id`. Trello
+automations require `board_id` and optionally accept `list_ids`; see the
+[Trello task source guide](https://caipora-labs.github.io/curupira/trello/). For Azure DevOps, `repo` uses
 `organization/project/repository` (organization name, not a full URL). Optional
 `status` (`active` by default), `source_branch`, and `target_branch` filter the Azure
 list. Optional `profile` selects a named CLI profile; otherwise the default profile
@@ -135,7 +137,9 @@ Common fields: `${repo}`, `${automation_id}`, `${task_type}`, `${task_number}`,
 `${issue_title}`, `${issue_body}`, `${issue_url}`. Pull requests add
 `${pull_request_number}`, `${pull_request_title}`, `${pull_request_body}`,
 `${pull_request_url}`, `${pull_request_is_draft}`, `${pull_request_head_ref}`, and
-`${pull_request_base_ref}`. For cron tasks, `${task_number}` is the occurrence timestamp.
+`${pull_request_base_ref}`. Monday.com items add `${monday_item_id}`,
+`${monday_item_title}`, and `${monday_board_id}`. For cron tasks, `${task_number}` is the
+occurrence timestamp.
 
 ### Discovery, concurrency, and cron semantics
 
@@ -151,6 +155,10 @@ items to the `Todo` status automatically.
 Other task sources can be added as trigger plugins registered under the
 `curupira.triggers` entry-point group; see the
 [plugins guide](https://github.com/caipora-labs/curupira/blob/main/docs/en/plugins.md).
+
+For monday.com, install the official CLI (`go install github.com/mondaycom/mcli/cmd/mcli@latest`
+or `brew install mondaycom/tap/mcli`) and authenticate with `mcli auth login --token <token>`
+or `MONDAY_API_TOKEN`. The configuration guide covers a complete `monday-cli-items` example.
 
 `max_active_tasks` bounds concurrently running coding agents (default 1). By default,
 each task runs in a new worktree beside its base checkout, so tasks for the same repository

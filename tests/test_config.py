@@ -18,6 +18,7 @@ from curupira.models import (
     CronAutomationConfiguration,
     CursorCliProfile,
     IssueAutomationConfiguration,
+    MondayAutomationConfiguration,
     PullRequestAutomationConfiguration,
     TrelloAutomationConfiguration,
 )
@@ -32,6 +33,8 @@ def configuration(trigger: str = "issue", **overrides: Any) -> ApplicationSettin
     }
     if trigger == "cron":
         automation["schedule"] = "0 9 * * 1"
+    elif trigger == "monday-cli-items":
+        automation["board_id"] = "12345678901234567"
     elif trigger == "trello-cli-cards":
         automation["board_id"] = "board123"
     elif trigger != "azure-cli-pull-requests":
@@ -48,6 +51,7 @@ def configuration(trigger: str = "issue", **overrides: Any) -> ApplicationSettin
         ("issue", IssueAutomationConfiguration),
         ("github-cli-pull-requests", PullRequestAutomationConfiguration),
         ("azure-cli-pull-requests", AzurePullRequestAutomationConfiguration),
+        ("monday-cli-items", MondayAutomationConfiguration),
         ("trello-cli-cards", TrelloAutomationConfiguration),
         ("cron", CronAutomationConfiguration),
     ],
@@ -85,6 +89,12 @@ def test_pull_request_automation_accepts_jq_filter() -> None:
     automation = settings.coding_agents.automations["daily"]
     assert isinstance(automation, PullRequestAutomationConfiguration)
     assert automation.jq == '.[] | select(.mergeable == "MERGEABLE")'
+
+
+@pytest.mark.parametrize("board_id", ["", "not-a-number", "123/../../4", "\uff11\uff12\uff13"])
+def test_monday_board_id_must_be_numeric(board_id: str) -> None:
+    with pytest.raises(ValidationError, match="board_id"):
+        configuration("monday-cli-items", board_id=board_id)
 
 
 @pytest.mark.parametrize(
